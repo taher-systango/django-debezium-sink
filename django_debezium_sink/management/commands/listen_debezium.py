@@ -1,14 +1,15 @@
 import json
-import pprint
 import signal
 import sys
 
-from confluent_kafka import Consumer, KafkaException, TopicPartition
+from confluent_kafka import Consumer, KafkaException
 from django.apps import apps
-from django.core.exceptions import ImproperlyConfigured
+from django.conf import settings
 from django.core.management import CommandError
 from django.core.management.base import BaseCommand
+
 from django_debezium_sink.signals import debezium_updates
+
 
 class Command(BaseCommand):
     help = 'Listen to debezium events'
@@ -45,8 +46,8 @@ class Command(BaseCommand):
 
     def create_consumer(self, group=None):
         if not group:
-            group = 'g4'
-        broker = 'localhost:9092'
+            group = settings.DDS_KAFKA_CONSUMER_GROUP
+        broker = f'{settings.DDS_BROKER_HOST}:{settings.DDS_BROKER_PORT}'
         conf = {'bootstrap.servers': broker, 'group.id': group, 'auto.offset.reset': 'latest'}
         return Consumer(conf)
 
@@ -58,8 +59,8 @@ class Command(BaseCommand):
         return json.loads(value).get('payload')
 
     def create_topics(self):
-        server_name = 'dbserver'
-        schema = 'public'
+        server_name = settings.DDS_DEBEZIUM_CONNECTOR_SERVER_NAME
+        schema = settings.DDS_DATABASE_SCHEMA
         prefix = server_name
         if schema:
             prefix = f'{prefix}.{schema}.{self.app}_'
@@ -68,7 +69,7 @@ class Command(BaseCommand):
         return topics
 
     def validate_topics(self, topics):
-        consumer = self.create_consumer('validate')
+        consumer = self.create_consumer('django-debezium-sink-validate')
         server_topics = consumer.list_topics().topics.keys()
         if len(set(topics) - set(server_topics)) > 0:
             self.log(f'Ignoring topics not found on server: {set(topics) - set(server_topics)}')

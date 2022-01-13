@@ -13,3 +13,4 @@ Quick start
         ...
         'django_debezium_sink',
     ]
+
