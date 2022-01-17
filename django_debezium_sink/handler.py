@@ -1,6 +1,8 @@
 import importlib
 import json
 import logging
+import os
+from multiprocessing import Process, Pool
 
 import colorlog
 from confluent_kafka import KafkaException, Consumer
@@ -20,9 +22,10 @@ logger.setLevel(logging.DEBUG)
 class DebeziumHandler:
     def __init__(self):
         self._models = []
-        self.topics = self.validate_topics(self.create_topics())
+        self.topics = self.validate_topics(self.generate_topics())
         self.consumer = self.create_consumer()
         self.consumer.subscribe(self.topics)
+        self.pool = Pool(processes=os.cpu_count() - 1 or 1)
 
     def listen(self):
         try:
@@ -40,21 +43,26 @@ class DebeziumHandler:
                     self.process_message(msg)
         finally:
             self.consumer.close()
+            self.pool.terminate()
+
+    @staticmethod
+    def send_message(model, payload):
+        debezium_updates.send(sender=model, payload=payload)
 
     def process_message(self, msg):
         payload = self.extract_payload(msg.value())
         # pprint.pprint(payload)
         model = self.get_model_from_payload(payload)
-        debezium_updates.send(sender=model, payload=payload)
+        self.pool.apply_async(DebeziumHandler.send_message, args=(model, payload))
 
     def get_model_from_payload(self, payload):
         table_name = payload.get('source').get('table')
         return self._models[table_name]
 
-    def extract_payload(self, value):
+    def extract_payload(self, value: str):
         return json.loads(value).get('payload')
 
-    def create_topics(self):
+    def generate_topics(self):
         server_name = settings.DDS_DEBEZIUM_CONNECTOR_SERVER_NAME
         schema = settings.DDS_DATABASE_SCHEMA
         prefix = server_name
@@ -73,12 +81,12 @@ class DebeziumHandler:
                 model = getattr(importlib.import_module('.'.join(item_list[0:-1:])), item_list[-1])
                 self._models[model._meta.db_table] = model
             except Exception as e:
-                print(e)
+                self.log(e, 'error')
                 self.log(f'Cannot load model "{item}"', 'error')
         return self._models.values()
 
-    def validate_topics(self, topics):
-        consumer = self.create_consumer('django-debezium-sink-validate')
+    def validate_topics(self, topics: list):
+        consumer = self.create_consumer('DDS-validate-topics')
         server_topics = consumer.list_topics().topics.keys()
         if len(set(topics) - set(server_topics)) > 0:
             self.log(f'Ignoring topics not found on server: {set(topics) - set(server_topics)}', 'warn')

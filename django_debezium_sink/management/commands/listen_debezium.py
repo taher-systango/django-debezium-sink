@@ -9,9 +9,6 @@ from django_debezium_sink.handler import DebeziumHandler
 class Command(BaseCommand):
     help = 'Listen to debezium events'
 
-    def add_arguments(self, parser):
-        parser.add_argument('app', type=str)
-
     def handle(self, *args, **options):
         handler = DebeziumHandler()
         handler.listen()
