@@ -25,7 +25,8 @@ class DebeziumHandler:
         self.topics = self.validate_topics(self.generate_topics())
         self.consumer = self.create_consumer()
         self.consumer.subscribe(self.topics)
-        self.pool = Pool(processes=os.cpu_count() - 1 or 1)
+        cpu_count = os.cpu_count() or 2
+        self.pool = Pool(processes=cpu_count - 1)
 
     def listen(self):
         try:
