@@ -1,11 +1,13 @@
+import importlib
 import json
+import pprint
 import signal
 import sys
 
 from confluent_kafka import Consumer, KafkaException
 from django.apps import apps
 from django.conf import settings
-from django.core.management import CommandError
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand
 
 from django_debezium_sink.signals import debezium_updates
@@ -18,8 +20,6 @@ class Command(BaseCommand):
         parser.add_argument('app', type=str)
 
     def handle(self, *args, **options):
-        self.app = options['app']
-        self.validate_app()
         topics = self.create_topics()
         topics = self.validate_topics(topics)
         consumer = self.create_consumer()
@@ -28,6 +28,8 @@ class Command(BaseCommand):
 
     def listen(self, consumer):
         try:
+            self.log(f'Creating Kafka consumer at {settings.DDS_BROKER_HOST}:{settings.DDS_BROKER_PORT}', 'success')
+            self.log(f'Consuming topics: {self.topics}', 'success')
             while True:
                 msg = consumer.poll(timeout=1.0)
                 if msg is None:
@@ -39,7 +41,7 @@ class Command(BaseCommand):
                         continue
                     payload = self.extract_payload(msg.value())
                     # pprint.pprint(payload)
-                    model = self.get_model(payload)
+                    model = self.get_model_from_payload(payload)
                     debezium_updates.send(sender=model, payload=payload)
         finally:
             consumer.close()
@@ -51,9 +53,9 @@ class Command(BaseCommand):
         conf = {'bootstrap.servers': broker, 'group.id': group, 'auto.offset.reset': 'latest'}
         return Consumer(conf)
 
-    def get_model(self, payload):
-        table_name = payload.get('source').get('table').split(f'{self.app}_')[1]
-        return apps.get_model(self.app, table_name)
+    def get_model_from_payload(self, payload):
+        table_name = payload.get('source').get('table')
+        return self._models[table_name]
 
     def extract_payload(self, value):
         return json.loads(value).get('payload')
@@ -63,25 +65,40 @@ class Command(BaseCommand):
         schema = settings.DDS_DATABASE_SCHEMA
         prefix = server_name
         if schema:
-            prefix = f'{prefix}.{schema}.{self.app}_'
-        models = apps.all_models[self.app].keys()
-        topics = [prefix + model for model in models]
-        return topics
+            prefix = f'{prefix}.{schema}.'
+        models = self.parse_models()
+        self.topics = [prefix + model._meta.app_label + '_' + model._meta.model_name for model in models]
+        return self.topics
 
     def validate_topics(self, topics):
         consumer = self.create_consumer('django-debezium-sink-validate')
         server_topics = consumer.list_topics().topics.keys()
         if len(set(topics) - set(server_topics)) > 0:
-            self.log(f'Ignoring topics not found on server: {set(topics) - set(server_topics)}')
+            self.log(f'Ignoring topics not found on server: {set(topics) - set(server_topics)}', 'warn')
         return list(set(topics) & set(server_topics))
 
-    def validate_app(self):
-        if self.app not in apps.all_models.keys():
-            raise CommandError(f"No installed app with label '{self.app}'")
+    def parse_models(self):
+        self._models = {}
+        if len(settings.DDS_MODELS) == 0:
+            raise ImproperlyConfigured('DDS_MODELS setting not found')
+        for item in settings.DDS_MODELS:
+            try:
+                item_list = item.split('.')
+                model = getattr(importlib.import_module('.'.join(item_list[0:-1:])), item_list[-1])
+                self._models[model._meta.db_table] = model
+            except Exception as e:
+                print(e)
+                self.log(f'Cannot load model "{item}"', 'error')
+        return self._models.values()
 
-    def log(self, msg):
+    def log(self, msg, style):
         msg = f'django-debezium-sink: {msg}'
-        self.stdout.write(self.style.WARNING(msg))
+        if style == 'error':
+            self.stdout.write(self.style.ERROR(msg))
+        elif style == 'warn':
+            self.stdout.write(self.style.WARNING(msg))
+        elif style == 'success':
+            self.stdout.write(self.style.SUCCESS(msg))
 
 
 def int_singal(sig, frame):
