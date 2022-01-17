@@ -16,19 +16,10 @@ class Command(BaseCommand):
         handler = DebeziumHandler()
         handler.listen()
 
-    def log(self, msg, style):
-        msg = f'django-debezium-sink: {msg}'
-        if style == 'error':
-            self.stdout.write(self.style.ERROR(msg))
-        elif style == 'warn':
-            self.stdout.write(self.style.WARNING(msg))
-        elif style == 'success':
-            self.stdout.write(self.style.SUCCESS(msg))
 
-
-def int_singal(sig, frame):
+def int_signal(sig, frame):
     print('Stopped successfully')
     sys.exit(0)
 
 
-signal.signal(signal.SIGINT, int_singal)
+signal.signal(signal.SIGINT, int_signal)

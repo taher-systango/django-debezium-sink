@@ -1,11 +1,20 @@
 import importlib
 import json
+import logging
 
+import colorlog
 from confluent_kafka import KafkaException, Consumer
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from django_debezium_sink.signals import debezium_updates
+
+handler = colorlog.StreamHandler()
+handler.setFormatter(colorlog.ColoredFormatter('%(log_color)s%(levelname)s:%(name)s:%(message)s'))
+
+logger = colorlog.getLogger(__name__)
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 
 class DebeziumHandler:
@@ -83,5 +92,9 @@ class DebeziumHandler:
         return Consumer(conf)
 
     def log(self, msg, style):
-        msg = f'django-debezium-sink: {msg}'
-        print(msg)
+        if style == 'success':
+            logger.info(msg)
+        elif style == 'warn':
+            logger.warning(msg)
+        elif style == 'error':
+            logger.error(msg)
