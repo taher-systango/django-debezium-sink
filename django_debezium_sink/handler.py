@@ -2,7 +2,8 @@ import importlib
 import json
 import logging
 import os
-from multiprocessing import Process, Pool
+from dataclasses import dataclass
+from multiprocessing import Pool
 
 import colorlog
 from confluent_kafka import KafkaException, Consumer
@@ -50,11 +51,23 @@ class DebeziumHandler:
     def send_message(model, payload):
         debezium_updates.send(sender=model, payload=payload)
 
+    def generate_result(self, payload):
+        result = Result()
+        for key in payload:
+            if type(payload[key]) == dict:
+                value = self.generate_result(payload.get(key))
+            else:
+                value = payload.get(key)
+            setattr(result, key, value)
+        return result
+
     def process_message(self, msg):
         payload = self.extract_payload(msg.value())
         # pprint.pprint(payload)
         model = self.get_model_from_payload(payload)
-        self.pool.apply_async(DebeziumHandler.send_message, args=(model, payload))
+        result = self.generate_result(payload)
+        self.pool.apply_async(DebeziumHandler.send_message, args=(model, result))
+        # DebeziumHandler.send_message(model, result)
 
     def get_model_from_payload(self, payload):
         table_name = payload.get('source').get('table')
@@ -107,3 +120,8 @@ class DebeziumHandler:
             logger.warning(msg)
         elif style == 'error':
             logger.error(msg)
+
+
+@dataclass
+class Result:
+    pass
